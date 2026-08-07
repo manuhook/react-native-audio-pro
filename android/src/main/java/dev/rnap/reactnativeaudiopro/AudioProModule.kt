@@ -113,8 +113,8 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 	}
 
 	@ReactMethod
-	fun ambientPause() {
-		AudioProAmbientController.ambientPause()
+	fun ambientPause(options: ReadableMap?) {
+		AudioProAmbientController.ambientPause(options)
 	}
 
 	@ReactMethod

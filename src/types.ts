@@ -115,6 +115,20 @@ export interface AmbientAudioPlayOptions {
 	loop?: boolean;
 }
 
+/**
+ * Options for ambientPause(). When provided, the native side holds full volume
+ * for `holdMs`, ramps linearly to silence over `fadeMs`, then pauses. The ramp
+ * runs natively so it completes even while the app is backgrounded (JS timers
+ * are frozen on Android in background). A subsequent ambientResume(),
+ * ambientPlay() or ambientStop() cancels the pending fade.
+ */
+export interface AmbientAudioPauseOptions {
+	/** Full-volume hold before the ramp, in milliseconds (default: 0) */
+	holdMs?: number;
+	/** Linear ramp duration down to silence, in milliseconds (default: 0 = immediate pause) */
+	fadeMs?: number;
+}
+
 export type AudioProAmbientEventCallback = (event: AudioProAmbientEvent) => void;
 
 export interface AudioProAmbientEvent {

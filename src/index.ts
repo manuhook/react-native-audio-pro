@@ -46,6 +46,8 @@ export type {
 	// Ambient audio types
 	/** Options for ambient audio playback */
 	AmbientAudioPlayOptions,
+	/** Options for ambient audio pause (native fade-out) */
+	AmbientAudioPauseOptions,
 	/** Callback function type for ambient audio events */
 	AudioProAmbientEventCallback,
 	/** Type of ambient audio events that can be emitted */

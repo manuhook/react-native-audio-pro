@@ -20,6 +20,12 @@ class AudioPro: RCTEventEmitter {
 	private var ambientPlayer: AVPlayer?
 	private var ambientPlayerItem: AVPlayerItem?
 
+	// Fade-out state for ambientPause({ holdMs, fadeMs }). The ramp runs on a
+	// main-queue DispatchSourceTimer so it keeps ticking while the app is
+	// background-active (audio session running) — independent of JS timers.
+	private var ambientFadeTimer: DispatchSourceTimer?
+	private var ambientFadeGain: Float = 1.0
+
 
 	// Event types
 	private let EVENT_TYPE_STATE_CHANGED = "STATE_CHANGED"
@@ -1259,6 +1265,8 @@ class AudioPro: RCTEventEmitter {
 	func ambientStop() {
 		log("Ambient Stop")
 
+		cancelAmbientFade()
+
 		// Remove observer for track completion
 		if let item = ambientPlayerItem {
 			NotificationCenter.default.removeObserver(
@@ -1282,32 +1290,100 @@ class AudioPro: RCTEventEmitter {
 		activeVolumeAmbient = Float(volume)
 		log("Ambient Set Volume", activeVolumeAmbient)
 
-		// Apply volume to player if it exists
-		ambientPlayer?.volume = activeVolumeAmbient
+		// Apply volume to player if it exists, keeping a running fade-out
+		// authoritative (user volume scaled by the current fade gain).
+		ambientPlayer?.volume = activeVolumeAmbient * ambientFadeGain
 	}
 
 	/**
 	 * Pause ambient audio playback
 	 * No-op if already paused or not playing
+	 *
+	 * Optional fade-out: `options` may carry `holdMs` (full volume hold before
+	 * the ramp) and `fadeMs` (linear ramp duration down to silence). With no
+	 * options (or both at 0), pauses immediately — previous behavior.
+	 * A pending fade is cancelled by ambientResume/ambientPlay/ambientStop.
 	 */
-	@objc(ambientPause)
-	func ambientPause() {
-		log("Ambient Pause")
+	@objc(ambientPause:)
+	func ambientPause(options: NSDictionary?) {
+		let holdMs = (options?["holdMs"] as? Double) ?? 0
+		let fadeMs = (options?["fadeMs"] as? Double) ?? 0
+		log("Ambient Pause", "holdMs:", holdMs, "fadeMs:", fadeMs)
 
-		// Pause the player if it exists
-		ambientPlayer?.pause()
+		cancelAmbientFade()
+		guard let player = ambientPlayer else { return }
+		if holdMs <= 0 && fadeMs <= 0 {
+			player.pause()
+			return
+		}
+		startAmbientFadeOut(holdMs: holdMs, fadeMs: fadeMs)
 	}
 
 	/**
 	 * Resume ambient audio playback
 	 * No-op if already playing or no active track
+	 * Cancels a pending fade-out and restores full volume before resuming.
 	 */
 	@objc(ambientResume)
 	func ambientResume() {
 		log("Ambient Resume")
 
-		// Resume the player if it exists
+		cancelAmbientFade()
 		ambientPlayer?.play()
+	}
+
+	/**
+	 * Start the fade-out ramp: hold at full volume for holdMs, ramp linearly to
+	 * silence over fadeMs, then pause the player and restore full volume (the
+	 * player is paused at that point, so the restore is inaudible and the next
+	 * resume starts at the user volume).
+	 */
+	private func startAmbientFadeOut(holdMs: Double, fadeMs: Double) {
+		let startedAt = ProcessInfo.processInfo.systemUptime
+		let timer = DispatchSource.makeTimerSource(queue: .main)
+		timer.schedule(deadline: .now(), repeating: .milliseconds(50))
+		timer.setEventHandler { [weak self] in
+			guard let self = self else { return }
+			guard self.ambientFadeTimer === timer else { return }
+			guard let player = self.ambientPlayer else {
+				self.cancelAmbientFade()
+				return
+			}
+			let elapsedMs = (ProcessInfo.processInfo.systemUptime - startedAt) * 1000.0
+			let gain: Float
+			if elapsedMs < holdMs {
+				gain = 1.0
+			} else if fadeMs <= 0 {
+				gain = 0.0
+			} else {
+				gain = Float(max(0.0, min(1.0, 1.0 - (elapsedMs - holdMs) / fadeMs)))
+			}
+			self.ambientFadeGain = gain
+			player.volume = self.activeVolumeAmbient * gain
+			if gain <= 0.0 {
+				self.ambientFadeTimer = nil
+				timer.cancel()
+				player.pause()
+				self.ambientFadeGain = 1.0
+				player.volume = self.activeVolumeAmbient
+			}
+		}
+		ambientFadeTimer = timer
+		timer.resume()
+	}
+
+	/**
+	 * Cancel a pending fade-out and restore full volume.
+	 */
+	private func cancelAmbientFade() {
+		if let timer = ambientFadeTimer {
+			ambientFadeTimer = nil
+			timer.cancel()
+		}
+		if ambientFadeGain != 1.0 {
+			ambientFadeGain = 1.0
+			ambientPlayer?.volume = activeVolumeAmbient
+		}
 	}
 
 	/**

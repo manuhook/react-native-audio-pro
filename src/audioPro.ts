@@ -18,6 +18,7 @@ import {
 } from './values';
 
 import type {
+	AmbientAudioPauseOptions,
 	AmbientAudioPlayOptions,
 	AudioProAmbientEventCallback,
 	AudioProConfigureOptions,
@@ -459,10 +460,13 @@ export const AudioPro = {
 	/**
 	 * Pause ambient audio playback
 	 * No-op if already paused or not playing
+	 *
+	 * @param options - Optional native fade-out: hold `holdMs` at full volume,
+	 * ramp to silence over `fadeMs`, then pause. Omit for an immediate pause.
 	 */
-	ambientPause(): void {
-		logDebug('AudioPro: ambientPause()');
-		NativeAudioPro.ambientPause();
+	ambientPause(options?: AmbientAudioPauseOptions): void {
+		logDebug('AudioPro: ambientPause()', options);
+		NativeAudioPro.ambientPause(options ?? null);
 	},
 
 	/**
