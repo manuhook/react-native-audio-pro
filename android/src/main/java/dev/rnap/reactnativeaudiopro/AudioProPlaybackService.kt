@@ -297,12 +297,14 @@ open class AudioProPlaybackService : MediaLibraryService() {
         }
 
 	private fun ensureNotificationChannel(notificationManagerCompat: NotificationManagerCompat) {
-		val channel =
-			NotificationChannel(
-				CHANNEL_ID,
-				"audio_pro_notification_channel",
-				NotificationManager.IMPORTANCE_DEFAULT,
-			)
-		notificationManagerCompat.createNotificationChannel(channel)
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			val channel =
+				NotificationChannel(
+					CHANNEL_ID,
+					"audio_pro_notification_channel",
+					NotificationManager.IMPORTANCE_DEFAULT,
+				)
+			notificationManagerCompat.createNotificationChannel(channel)
+		}
 	}
 }
