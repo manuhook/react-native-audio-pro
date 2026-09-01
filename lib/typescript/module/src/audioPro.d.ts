@@ -44,6 +44,23 @@ export declare const AudioPro: {
      */
     play(track: AudioProTrack, options?: AudioProPlayOptions): void;
     /**
+     * Queue the track to play right after the current one, or clear the queue
+     * with `null`. The native player hands off to it by itself when the current
+     * track ends — no JS involved, so it also works while React Native is not
+     * running JS timely (app backgrounded on Android). The hand-off emits
+     * TRACK_TRANSITIONED (with the new track) instead of STOPPED + TRACK_ENDED.
+     *
+     * Only one track is queued at a time: each call replaces the previous one.
+     * play(), stop() and clear() drop the queue. No-op if nothing is playing.
+     *
+     * Android only for now: on other platforms the call is ignored and the
+     * track ends normally (TRACK_ENDED), so callers keep their TRACK_ENDED
+     * handling as the fallback.
+     *
+     * @param track - The track to play next, or null to clear the queue
+     */
+    setNextTrack(track: AudioProTrack | null): void;
+    /**
      * Pause the current playback
      * No-op if no track is playing or player is in IDLE or ERROR state
      */

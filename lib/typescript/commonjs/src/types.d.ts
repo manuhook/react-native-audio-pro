@@ -53,6 +53,12 @@ export interface AudioProTrackEndedPayload {
     position: number;
     duration: number;
 }
+export interface AudioProTrackTransitionedPayload {
+    /** Position in the new active track (0) */
+    position: number;
+    /** Duration of the new active track, 0 if not yet known */
+    duration: number;
+}
 export interface AudioProPlaybackErrorPayload {
     error: string;
     errorCode?: number;
