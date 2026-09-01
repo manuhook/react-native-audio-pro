@@ -48,6 +48,7 @@ This document defines the contract between `react-native-audio-pro`'s native med
 | `STATE_CHANGED` | Any state transition | ✅ | Emits `state`, `position`, `duration` |
 | `PROGRESS` | Every second during playback | ❌ | Includes updated `position`, `duration` |
 | `TRACK_ENDED` | When track completes | ✅ → `STOPPED` | Native must **pause**, **seek to 0**, then emit `STATE_CHANGED: STOPPED`. JS must not do this manually. |
+| `TRACK_TRANSITIONED` | Android: when the track queued with `setNextTrack()` takes over at the end of the current one | ❌ (stays `PLAYING`) | `track` is the new active track, `position` 0, `duration` of the new track (0 if unknown yet). Replaces `STATE_CHANGED: STOPPED` + `TRACK_ENDED` for that hand-off. JS must adopt the new track (metadata, history) without calling `play()`. |
 | `SEEK_COMPLETE` | After a TypeScript-initiated seek completes | ❌ | Not emitted for native lock screen seeks |
 | `PLAYBACK_SPEED_CHANGED` | On speed change | ❌ | Emits new rate |
 | `REMOTE_NEXT` / `REMOTE_PREV` | Lock screen buttons | ❌ | Developer's app must handle and call `play()` |

@@ -27,6 +27,7 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 
 		const val EVENT_TYPE_STATE_CHANGED = "STATE_CHANGED"
 		const val EVENT_TYPE_TRACK_ENDED = "TRACK_ENDED"
+		const val EVENT_TYPE_TRACK_TRANSITIONED = "TRACK_TRANSITIONED"
 		const val EVENT_TYPE_PLAYBACK_ERROR = "PLAYBACK_ERROR"
 		const val EVENT_TYPE_PROGRESS = "PROGRESS"
 		const val EVENT_TYPE_SEEK_COMPLETE = "SEEK_COMPLETE"
@@ -50,6 +51,11 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 		CoroutineScope(Dispatchers.Main).launch {
 			AudioProController.play(track, options)
 		}
+	}
+
+	@ReactMethod
+	fun setNextTrack(track: ReadableMap?) {
+		AudioProController.setNextTrack(track)
 	}
 
 	@ReactMethod

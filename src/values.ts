@@ -43,6 +43,12 @@ export enum AudioProEventType {
 	PROGRESS = 'PROGRESS',
 	/** Track has ended */
 	TRACK_ENDED = 'TRACK_ENDED',
+	/**
+	 * The player moved on its own to the track queued with `setNextTrack()`
+	 * (Android). `track` is the new active track. No TRACK_ENDED / STOPPED is
+	 * emitted for that hand-off.
+	 */
+	TRACK_TRANSITIONED = 'TRACK_TRANSITIONED',
 	/** Seek operation has completed */
 	SEEK_COMPLETE = 'SEEK_COMPLETE',
 	/** Playback speed has changed */

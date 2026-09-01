@@ -7,6 +7,7 @@ jest.mock('react-native', () => ({
 	NativeModules: {
 		AudioPro: {
 			play: jest.fn(),
+			setNextTrack: jest.fn(),
 			pause: jest.fn(),
 			resume: jest.fn(),
 			stop: jest.fn(),

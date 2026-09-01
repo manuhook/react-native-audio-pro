@@ -34,6 +34,8 @@ export type {
 	AudioProStateChangedPayload,
 	/** Payload for track ended events */
 	AudioProTrackEndedPayload,
+	/** Payload for track transitioned events (native hand-off to the queued track) */
+	AudioProTrackTransitionedPayload,
 	/** Payload for playback error events */
 	AudioProPlaybackErrorPayload,
 	/** Payload for progress update events */

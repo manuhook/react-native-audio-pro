@@ -3,6 +3,7 @@ package dev.rnap.reactnativeaudiopro
 import android.os.Bundle
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaLibraryService
@@ -104,6 +105,20 @@ open class AudioProMediaLibrarySessionCallback : MediaLibraryService.MediaLibrar
 			}
 			.build()
 
+	// Next/previous are JS-driven (custom commands above), never playlist
+	// navigation: with a track queued via setNextTrack the playlist holds two
+	// items, and without this the system controls would surface their own
+	// playlist next/previous buttons that bypass JS. Only commands that are
+	// unavailable on a single-item playlist are removed, so the controls stay
+	// exactly as before for every controller (notification, media buttons).
+	@OptIn(UnstableApi::class) // MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+	private val availablePlayerCommands: Player.Commands
+		get() = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+			.remove(Player.COMMAND_SEEK_TO_NEXT)
+			.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+			.remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+			.build()
+
 	@OptIn(UnstableApi::class)
 	override fun onConnect(
 		session: MediaSession,
@@ -111,6 +126,7 @@ open class AudioProMediaLibrarySessionCallback : MediaLibraryService.MediaLibrar
 	): MediaSession.ConnectionResult {
 		return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
 			.setAvailableSessionCommands(mediaNotificationSessionCommands)
+			.setAvailablePlayerCommands(availablePlayerCommands)
 			.setMediaButtonPreferences(getCommandButtons())
 			.build()
 	}

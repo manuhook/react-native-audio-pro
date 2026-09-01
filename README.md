@@ -143,6 +143,7 @@ React Native Audio Pro supports various audio file formats including MP3, AAC, a
 | Method | Description | Return Value |
 | --- | --- | --- |
 | **play(track: AudioProTrack, options?: AudioProPlayOptions)** | Loads and starts playing the specified track. | `void` |
+| **setNextTrack(track: AudioProTrack \| null)** | Android: queues the track to play right after the current one (natively, no JS needed at the hand-off — works while the app is backgrounded). `null` clears the queue; `play()`/`stop()`/`clear()` drop it. Emits `TRACK_TRANSITIONED` at the hand-off. Ignored on iOS (track ends with `TRACK_ENDED` as usual). | `void` |
 | **pause()** | Pauses the current playback. | `void` |
 | **resume()** | Resumes playback if paused. | `void` |
 | **stop()** | Stops playback and resets position to `0` while keeping the current track loaded; use `clear()` to unload it. | `void` |
@@ -213,6 +214,7 @@ const playingTrack = useAudioPro((s) => s.playingTrack);
 | `STATE_CHANGED`          | Emitted when the player's state changes (e.g., from LOADING to PLAYING).                      |
 | `PROGRESS`               | Emitted approximately once per second during playback with current position and duration.     |
 | `TRACK_ENDED`            | Emitted when a track completes playback naturally.                                            |
+| `TRACK_TRANSITIONED`     | Android: the player moved on its own to the track queued with `setNextTrack()`; `track` is the new active track. No `TRACK_ENDED`/`STOPPED` for that hand-off. |
 | `SEEK_COMPLETE`          | Emitted when a seek operation completes. Payload includes `triggeredBy` (`USER` or `SYSTEM`). |
 | `PLAYBACK_SPEED_CHANGED` | Emitted when the playback speed is changed.                                                   |
 | `REMOTE_NEXT`            | Emitted when the user presses the "Next" button on lock screen controls.                      |

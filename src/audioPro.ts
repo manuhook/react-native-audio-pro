@@ -1,4 +1,4 @@
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 
 import { ambientEmitter, emitter } from './emitter';
 import { internalStore } from './internalStore';
@@ -153,6 +153,43 @@ export const AudioPro = {
 		logDebug('AudioPro: play()', track, 'options:', options, 'nativeOptions:', nativeOptions);
 
 		NativeAudioPro.play(resolvedTrack, nativeOptions);
+	},
+
+	/**
+	 * Queue the track to play right after the current one, or clear the queue
+	 * with `null`. The native player hands off to it by itself when the current
+	 * track ends — no JS involved, so it also works while React Native is not
+	 * running JS timely (app backgrounded on Android). The hand-off emits
+	 * TRACK_TRANSITIONED (with the new track) instead of STOPPED + TRACK_ENDED.
+	 *
+	 * Only one track is queued at a time: each call replaces the previous one.
+	 * play(), stop() and clear() drop the queue. No-op if nothing is playing.
+	 *
+	 * Android only for now: on other platforms the call is ignored and the
+	 * track ends normally (TRACK_ENDED), so callers keep their TRACK_ENDED
+	 * handling as the fallback.
+	 *
+	 * @param track - The track to play next, or null to clear the queue
+	 */
+	setNextTrack(track: AudioProTrack | null): void {
+		if (Platform.OS !== 'android' || typeof NativeAudioPro?.setNextTrack !== 'function') {
+			logDebug('AudioPro: setNextTrack() ignored - not supported on this platform');
+			return;
+		}
+		if (track === null) {
+			logDebug('AudioPro: setNextTrack(null)');
+			NativeAudioPro.setNextTrack(null);
+			return;
+		}
+		const resolvedTrack = { ...track };
+		validateFilePath(resolvedTrack.url);
+		validateFilePath(resolvedTrack.artwork);
+		if (!validateTrack(resolvedTrack)) {
+			console.error('[react-native-audio-pro]: Invalid track provided to setNextTrack().');
+			return;
+		}
+		logDebug('AudioPro: setNextTrack()', resolvedTrack);
+		NativeAudioPro.setNextTrack(resolvedTrack);
 	},
 
 	/**

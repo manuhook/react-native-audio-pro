@@ -32,6 +32,10 @@ object AudioProController {
 	private var enginePlayerListener: Player.Listener? = null
 
 	private var activeTrack: ReadableMap? = null
+	// Track queued right after the active one (setNextTrack). ExoPlayer moves to
+	// it by itself when the active track ends, so the hand-off needs no JS —
+	// React Native may not run JS timely while the app is backgrounded.
+	private var queuedTrack: ReadableMap? = null
 	private var activeVolume: Float = 1.0f
 	private var activePlaybackSpeed: Float = 1.0f
 
@@ -235,18 +239,6 @@ object AudioProController {
 		}
 
 		val title = track.getString("title") ?: "Unknown Title"
-		val artist = track.getString("artist") ?: "Unknown Artist"
-		val album = track.getString("album") ?: "Unknown Album"
-		val artwork = track.getString("artwork")?.toUri()
-
-		val metadataBuilder = MediaMetadata.Builder()
-			.setTitle(title)
-			.setArtist(artist)
-			.setAlbumTitle(album)
-
-		if (artwork != null) {
-			metadataBuilder.setArtworkUri(artwork)
-		}
 
 		// Process custom headers if provided
 		headersAudio = null
@@ -260,22 +252,16 @@ object AudioProController {
 			}
 		}
 
-		// Parse the URL string into a Uri object to properly handle all URI schemes including file://
-		val uri = url.toUri()
-		log("Parsed URI: $uri, scheme: ${uri.scheme}")
-
-		val mediaItem = MediaItem.Builder()
-			.setUri(uri)
-			.setMediaId("custom_track_1")
-			.setMediaMetadata(metadataBuilder.build())
-			.build()
+		val mediaItem = buildMediaItem(track, url, "custom_track_1")
 
 		runOnUiThread {
 			log("Play", title, url)
 			emitState(AudioProModule.STATE_LOADING, 0L, 0L, "play()")
 
 			enginerBrowser?.let {
-				// Set the new media item and prepare the player
+				// Set the new media item and prepare the player. setMediaItem
+				// replaces the whole playlist, so any queued track is gone too.
+				queuedTrack = null
 				it.setMediaItem(mediaItem)
 				it.prepare()
 
@@ -290,6 +276,72 @@ object AudioProController {
 					emitState(AudioProModule.STATE_PAUSED, 0L, 0L, "play(autoPlay=false)")
 				}
 			} ?: Log.w("[react-native-audio-pro]", "MediaBrowser not ready")
+		}
+	}
+
+	/**
+	 * Builds the Media3 item for a JS track (url, title, artist, album, artwork).
+	 */
+	private fun buildMediaItem(track: ReadableMap, url: String, mediaId: String): MediaItem {
+		val title = track.getString("title") ?: "Unknown Title"
+		val artist = track.getString("artist") ?: "Unknown Artist"
+		val album = track.getString("album") ?: "Unknown Album"
+		val artwork = track.getString("artwork")?.toUri()
+
+		val metadataBuilder = MediaMetadata.Builder()
+			.setTitle(title)
+			.setArtist(artist)
+			.setAlbumTitle(album)
+
+		if (artwork != null) {
+			metadataBuilder.setArtworkUri(artwork)
+		}
+
+		// Parse the URL string into a Uri object to properly handle all URI schemes including file://
+		val uri = url.toUri()
+		log("Parsed URI: $uri, scheme: ${uri.scheme}")
+
+		return MediaItem.Builder()
+			.setUri(uri)
+			.setMediaId(mediaId)
+			.setMediaMetadata(metadataBuilder.build())
+			.build()
+	}
+
+	/**
+	 * Queues the track to play right after the active one, or clears the queue
+	 * when `track` is null. ExoPlayer transitions to it natively when the active
+	 * track ends (no STATE_ENDED / TRACK_ENDED for that hand-off); the listener
+	 * then emits TRACK_TRANSITIONED so JS can adopt the new active track.
+	 * Only ever one queued track: a new call replaces the previous one.
+	 * play() / stop() / clear() drop the queue. No-op before the first play().
+	 */
+	fun setNextTrack(track: ReadableMap?) {
+		log("setNextTrack() called", track?.getString("title"))
+		runOnUiThread {
+			val browser = enginerBrowser ?: run {
+				queuedTrack = null
+				return@runOnUiThread
+			}
+			// Drop whatever follows the active item.
+			val current = browser.currentMediaItemIndex
+			val count = browser.mediaItemCount
+			if (count > current + 1) {
+				browser.removeMediaItems(current + 1, count)
+			}
+			queuedTrack = null
+
+			if (track == null) return@runOnUiThread
+			if (count == 0) {
+				log("setNextTrack ignored: nothing is playing")
+				return@runOnUiThread
+			}
+			val url = track.getString("url") ?: run {
+				log("setNextTrack ignored: missing track URL")
+				return@runOnUiThread
+			}
+			browser.addMediaItem(buildMediaItem(track, url, "queued_track"))
+			queuedTrack = track
 		}
 	}
 
@@ -329,6 +381,14 @@ object AudioProController {
 		runOnUiThread {
 			// Do not detach player listener to ensure lock screen controls still work
 			// and state changes are emitted when playback is resumed from lock screen
+
+			// A stopped player must not auto-advance: drop the queued track.
+			queuedTrack = null
+			enginerBrowser?.let {
+				val current = it.currentMediaItemIndex
+				val count = it.mediaItemCount
+				if (count > current + 1) it.removeMediaItems(current + 1, count)
+			}
 
 			enginerBrowser?.stop()
 			enginerBrowser?.seekTo(0)
@@ -400,8 +460,9 @@ object AudioProController {
 			}
 		}
 
-		// Clear track and stop timers
+		// Clear tracks and stop timers
 		activeTrack = null
+		queuedTrack = null
 		stopProgressTimer()
 
 		// Reset playback settings
@@ -648,6 +709,39 @@ object AudioProController {
 						)
 					}
 				}
+			}
+
+			/**
+			 * Native hand-off to the queued track (setNextTrack): ExoPlayer moved
+			 * on by itself when the active track ended. The queued track becomes
+			 * the active one, the finished item is dropped from the playlist so
+			 * the player is back to a single-item playlist (as after play()), and
+			 * TRACK_TRANSITIONED tells JS to adopt the new track. No STATE_ENDED
+			 * fires for this hand-off, so neither STOPPED nor TRACK_ENDED do.
+			 */
+			override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+				if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return
+				val next = queuedTrack ?: run {
+					log("onMediaItemTransition(AUTO) without a queued track, ignoring")
+					return
+				}
+				log("onMediaItemTransition(AUTO) ->", next.getString("title"))
+				queuedTrack = null
+				activeTrack = next
+				flowPendingSeekPosition = null
+
+				enginerBrowser?.let {
+					val current = it.currentMediaItemIndex
+					if (current > 0) it.removeMediaItems(0, current)
+				}
+
+				val dur = enginerBrowser?.duration ?: 0L
+				emitNotice(
+					AudioProModule.EVENT_TYPE_TRACK_TRANSITIONED,
+					0L,
+					dur,
+					"onMediaItemTransition(AUTO)"
+				)
 			}
 
 			override fun onPositionDiscontinuity(
