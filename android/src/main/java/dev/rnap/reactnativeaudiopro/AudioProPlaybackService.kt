@@ -106,6 +106,14 @@ open class AudioProPlaybackService : MediaLibraryService() {
 	override fun onTaskRemoved(rootIntent: android.content.Intent?) {
 		android.util.Log.d("AudioProPlaybackService", "Task removed, stopping service")
 
+		// The whole app is going away, but the app process (and the JS runtime)
+		// usually survives a swipe-away for a while: stop the ambient player too
+		// (it lives in the process, not in this service, and kept playing), and
+		// make the controller forget this session — with a STOPPED for JS — so
+		// the next play() rebuilds it instead of talking to a dead browser.
+		AudioProAmbientController.ambientStop()
+		AudioProController.dropSession("onTaskRemoved", emitStopped = true)
+
 		// Force stop playback and release resources
 		try {
 			if (::mediaLibrarySession.isInitialized) {

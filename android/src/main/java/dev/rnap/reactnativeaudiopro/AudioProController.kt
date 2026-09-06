@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaBrowser
+import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
@@ -79,24 +80,84 @@ object AudioProController {
 	}
 
 	private fun ensureSession() {
-		if (!::engineBrowserFuture.isInitialized || enginerBrowser == null) {
+		if (!hasUsableSession()) {
 			CoroutineScope(Dispatchers.Main).launch {
 				internalPrepareSession()
 			}
 		}
 	}
 
+	/**
+	 * True when a MediaBrowser exists and is still connected to the playback
+	 * service. A browser whose session went away (service destroyed on task
+	 * removal, or by the system) stays non-null but silently ignores every
+	 * command ("The controller is not connected"), so it counts as no session.
+	 */
+	private fun hasUsableSession(): Boolean {
+		val browser = enginerBrowser ?: return false
+		return browser.isConnected
+	}
+
 	private suspend fun internalPrepareSession() {
+		// Forget a stale (disconnected) browser before building a new one.
+		enginerBrowser?.let { stale ->
+			if (!stale.isConnected) {
+				dropSession("internalPrepareSession(stale browser)", emitStopped = false)
+			}
+		}
 		log("Preparing MediaBrowser session")
 		val token =
 			SessionToken(
 				reactContext!!,
 				ComponentName(reactContext!!, AudioProPlaybackService::class.java)
 			)
-		engineBrowserFuture = MediaBrowser.Builder(reactContext!!, token).buildAsync()
+		engineBrowserFuture = MediaBrowser.Builder(reactContext!!, token)
+			.setListener(object : MediaBrowser.Listener {
+				// The playback service went away underneath us (destroyed on
+				// task removal, or stopped by the system): forget this browser
+				// so the next command rebuilds the session instead of being
+				// ignored by a disconnected controller.
+				override fun onDisconnected(controller: MediaController) {
+					if (enginerBrowser === controller) {
+						dropSession("onDisconnected", emitStopped = true)
+					}
+				}
+			})
+			.buildAsync()
 		enginerBrowser = engineBrowserFuture.await()
 		attachPlayerListener()
 		log("MediaBrowser is ready")
+	}
+
+	/**
+	 * Forgets the current MediaBrowser: the playback service (and the player it
+	 * owns) is gone or about to go — task swiped away (onTaskRemoved) or the
+	 * session disconnected. Without this the stale browser stayed in place and,
+	 * because the app process and the JS runtime usually survive a swipe-away,
+	 * the next play() went to a controller that ignores every command ("The
+	 * controller is not connected"): the app hung in LOADING.
+	 * With `emitStopped`, emits STOPPED when a track was active so JS learns the
+	 * playback ended; the track metadata is kept, as after stop().
+	 * Must be called on the main thread.
+	 */
+	fun dropSession(reason: String, emitStopped: Boolean) {
+		log("Dropping MediaBrowser session:", reason)
+		stopProgressTimer()
+		queuedTrack = null
+		flowPendingSeekPosition = null
+		val hadBrowser = enginerBrowser != null
+		detachPlayerListener()
+		if (::engineBrowserFuture.isInitialized) {
+			try {
+				MediaBrowser.releaseFuture(engineBrowserFuture)
+			} catch (e: Exception) {
+				Log.e("[react-native-audio-pro]", "Error releasing MediaBrowser", e)
+			}
+		}
+		enginerBrowser = null
+		if (emitStopped && hadBrowser && activeTrack != null) {
+			emitState(AudioProModule.STATE_STOPPED, 0L, 0L, "dropSession($reason)")
+		}
 	}
 
 	// Data class to hold parsed play options
@@ -443,7 +504,7 @@ object AudioProController {
 	 * Ensures the session is ready and prepares for new playback.
 	 */
 	private suspend fun ensurePreparedForNewPlayback() {
-		if (enginerBrowser == null) {
+		if (!hasUsableSession()) {
 			internalPrepareSession()
 		}
 		prepareForNewPlayback()
