@@ -55,7 +55,11 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 
 	@ReactMethod
 	fun setNextTrack(track: ReadableMap?) {
-		AudioProController.setNextTrack(track)
+		// Same dispatcher as play(): Main coroutines run in call order, and the
+		// controller serialises both behind one mutex.
+		CoroutineScope(Dispatchers.Main).launch {
+			AudioProController.setNextTrack(track)
+		}
 	}
 
 	@ReactMethod

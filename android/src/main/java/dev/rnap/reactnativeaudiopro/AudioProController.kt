@@ -22,6 +22,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 object AudioProController {
 	private var reactContext: ReactApplicationContext? = null
@@ -36,6 +38,14 @@ object AudioProController {
 	// it by itself when the active track ends, so the hand-off needs no JS —
 	// React Native may not run JS timely while the app is backgrounded.
 	private var queuedTrack: ReadableMap? = null
+	// Serialises play() and setNextTrack() (both run as Main coroutines, in
+	// call order — the mutex is fair). JS fires them back to back: play() then
+	// setNextTrack(next). Without this, play() posted its ExoPlayer work one
+	// hop deeper on the main looper than setNextTrack() did, so the queued
+	// item landed on the *previous* playlist (then wiped by setMediaItem) — or,
+	// with the previous track ended, made ExoPlayer advance into it (a spurious
+	// TRACK_TRANSITIONED) just before the requested track was set.
+	private val commandMutex = Mutex()
 	private var activeVolume: Float = 1.0f
 	private var activePlaybackSpeed: Float = 1.0f
 
@@ -196,9 +206,9 @@ object AudioProController {
 	private fun prepareForNewPlayback() {
 		log("Preparing for new playback")
 
-		runOnUiThread {
-			enginerBrowser?.pause()
-		}
+		// Called from play() on the Main dispatcher: act directly, so the pause
+		// cannot land *after* the new item is set and started (see commandMutex).
+		enginerBrowser?.pause()
 
 		stopProgressTimer()
 
@@ -208,6 +218,11 @@ object AudioProController {
 	}
 
 	suspend fun play(track: ReadableMap, options: ReadableMap) {
+		commandMutex.withLock { playLocked(track, options) }
+	}
+
+	// Runs on the Main dispatcher (AudioProModule.play), under commandMutex.
+	private suspend fun playLocked(track: ReadableMap, options: ReadableMap) {
 		val opts = extractPlaybackOptions(options)
 
 		ensurePreparedForNewPlayback()
@@ -254,29 +269,30 @@ object AudioProController {
 
 		val mediaItem = buildMediaItem(track, url, "custom_track_1")
 
-		runOnUiThread {
-			log("Play", title, url)
-			emitState(AudioProModule.STATE_LOADING, 0L, 0L, "play()")
+		// Already on the main thread: drive the player directly rather than
+		// posting, so the whole command completes before the mutex is released
+		// and a following setNextTrack() sees the new playlist.
+		log("Play", title, url)
+		emitState(AudioProModule.STATE_LOADING, 0L, 0L, "play()")
 
-			enginerBrowser?.let {
-				// Set the new media item and prepare the player. setMediaItem
-				// replaces the whole playlist, so any queued track is gone too.
-				queuedTrack = null
-				it.setMediaItem(mediaItem)
-				it.prepare()
+		enginerBrowser?.let {
+			// Set the new media item and prepare the player. setMediaItem
+			// replaces the whole playlist, so any queued track is gone too.
+			queuedTrack = null
+			it.setMediaItem(mediaItem)
+			it.prepare()
 
-				// Set playback speed regardless of autoPlay
-				it.setPlaybackSpeed(opts.speed)
-				// Set volume regardless of autoPlay
-				it.setVolume(opts.volume)
+			// Set playback speed regardless of autoPlay
+			it.setPlaybackSpeed(opts.speed)
+			// Set volume regardless of autoPlay
+			it.setVolume(opts.volume)
 
-				if (opts.autoPlay) {
-					it.play()
-				} else {
-					emitState(AudioProModule.STATE_PAUSED, 0L, 0L, "play(autoPlay=false)")
-				}
-			} ?: Log.w("[react-native-audio-pro]", "MediaBrowser not ready")
-		}
+			if (opts.autoPlay) {
+				it.play()
+			} else {
+				emitState(AudioProModule.STATE_PAUSED, 0L, 0L, "play(autoPlay=false)")
+			}
+		} ?: Log.w("[react-native-audio-pro]", "MediaBrowser not ready")
 	}
 
 	/**
@@ -316,12 +332,14 @@ object AudioProController {
 	 * Only ever one queued track: a new call replaces the previous one.
 	 * play() / stop() / clear() drop the queue. No-op before the first play().
 	 */
-	fun setNextTrack(track: ReadableMap?) {
+	suspend fun setNextTrack(track: ReadableMap?) {
 		log("setNextTrack() called", track?.getString("title"))
-		runOnUiThread {
+		// Runs on the Main dispatcher (AudioProModule.setNextTrack), after any
+		// play() issued before it has fully applied its playlist (commandMutex).
+		commandMutex.withLock {
 			val browser = enginerBrowser ?: run {
 				queuedTrack = null
-				return@runOnUiThread
+				return
 			}
 			// Drop whatever follows the active item.
 			val current = browser.currentMediaItemIndex
@@ -331,17 +349,18 @@ object AudioProController {
 			}
 			queuedTrack = null
 
-			if (track == null) return@runOnUiThread
+			if (track == null) return
 			if (count == 0) {
 				log("setNextTrack ignored: nothing is playing")
-				return@runOnUiThread
+				return
 			}
 			val url = track.getString("url") ?: run {
 				log("setNextTrack ignored: missing track URL")
-				return@runOnUiThread
+				return
 			}
 			browser.addMediaItem(buildMediaItem(track, url, "queued_track"))
 			queuedTrack = track
+			log("setNextTrack queued", track.getString("title"), "playlist size=", browser.mediaItemCount)
 		}
 	}
 
