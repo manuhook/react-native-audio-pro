@@ -29,6 +29,7 @@ import androidx.media3.session.MediaSession.ControllerInfo
 open class AudioProPlaybackService : MediaLibraryService() {
 
 	private lateinit var mediaLibrarySession: MediaLibrarySession
+	private var rangeController: AudioProRangeController? = null
 
 	companion object {
 		private const val NOTIFICATION_ID = 789
@@ -137,6 +138,8 @@ open class AudioProPlaybackService : MediaLibraryService() {
 	// MediaSessionService.clearListener
 	@OptIn(UnstableApi::class)
 	override fun onDestroy() {
+		rangeController?.release()
+		rangeController = null
 		android.util.Log.d("AudioProPlaybackService", "Service being destroyed")
 
 		// Make sure to release all resources
@@ -229,6 +232,7 @@ open class AudioProPlaybackService : MediaLibraryService() {
 		player.setHandleAudioBecomingNoisy(true)
 		player.repeatMode = Player.REPEAT_MODE_OFF
 		player.addAnalyticsListener(EventLogger())
+		rangeController = AudioProRangeController(player).also { player.addListener(it) }
 
 		mediaLibrarySession =
 			MediaLibrarySession.Builder(this, player, createLibrarySessionCallback())

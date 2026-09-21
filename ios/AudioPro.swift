@@ -77,6 +77,15 @@ class AudioPro: RCTEventEmitter {
 	private var lastEmittedState: String = ""
 	private var wasPlayingBeforeInterruption: Bool = false
 	private var pendingStartTimeMs: Double? = nil
+	private var seekGate = PlaybackSeekGate()
+	private var isSeekingInitialPosition: Bool { seekGate.isInitialPending }
+	private var rangeStartMs: Double { currentTrack?["startMs"] as? Double ?? 0 }
+	private var rangeEndMs: Double? { currentTrack?["endMs"] as? Double }
+
+	private func clampToRange(_ positionMs: Double, durationMs: Double) -> Double {
+		let end = min(rangeEndMs ?? .infinity, durationMs > 0 && durationMs.isFinite ? durationMs : .infinity)
+		return max(min(rangeStartMs, end), min(positionMs, end))
+	}
 	private var settingSkipIntervalMs: Double = 30000.0
 
 	////////////////////////////////////////////////////////////
@@ -303,6 +312,10 @@ class AudioPro: RCTEventEmitter {
 		settingShowNextPrevControls = options["showNextPrevControls"] as? Bool ?? true
 		settingShowSkipControls = options["showSkipControls"] as? Bool ?? false
 		pendingStartTimeMs = options["startTimeMs"] as? Double
+		if rangeStartMs > 0 || rangeEndMs != nil {
+			pendingStartTimeMs = clampToRange(pendingStartTimeMs ?? rangeStartMs, durationMs: 0)
+		}
+		seekGate.reset()
 
 		if let skipIntervalMs = options["skipIntervalMs"] as? Double {
 			settingSkipIntervalMs = skipIntervalMs
@@ -398,6 +411,12 @@ class AudioPro: RCTEventEmitter {
 			item = AVPlayerItem(url: url)
 		}
 
+		// AVFoundation porte la borne même quand JS est suspendu en arrière-plan.
+		item.reversePlaybackEndTime = CMTime(seconds: rangeStartMs / 1000, preferredTimescale: 1000)
+		if let endMs = rangeEndMs {
+			item.forwardPlaybackEndTime = CMTime(seconds: endMs / 1000, preferredTimescale: 1000)
+		}
+
 		// Add observer to the new item
 		item.addObserver(self, forKeyPath: "status", options: [.new], context: nil)
 		isStatusObserverAdded = true
@@ -433,7 +452,7 @@ class AudioPro: RCTEventEmitter {
 		)
 
 		// Set up playback speed
-		if currentPlaybackSpeed != 1.0 {
+		if currentPlaybackSpeed != 1.0 && pendingStartTimeMs == nil {
 			player?.rate = currentPlaybackSpeed
 
 			var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
@@ -441,9 +460,9 @@ class AudioPro: RCTEventEmitter {
 			MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo
 		}
 
-		if autoPlay {
+		if autoPlay && pendingStartTimeMs == nil {
 			player?.play()
-		} else {
+		} else if !autoPlay {
 			DispatchQueue.main.async {
 				self.sendStateEvent(state: self.STATE_PAUSED, position: 0, duration: 0, track: self.currentTrack)
 			}
@@ -542,6 +561,7 @@ class AudioPro: RCTEventEmitter {
 	@objc(resume)
 	func resume() {
 		shouldBePlaying = true
+		if pendingStartTimeMs != nil || isSeekingInitialPosition { return }
 
 		// Try to reactivate the audio session if needed
 		do {
@@ -573,15 +593,16 @@ class AudioPro: RCTEventEmitter {
 		shouldBePlaying = false
 
 		pendingStartTimeMs = nil
+		seekGate.reset()
 
 		player?.pause()
-		player?.seek(to: .zero)
+		player?.seek(to: CMTime(seconds: rangeStartMs / 1000, preferredTimescale: 1000))
 		stopTimer()
 		// Do not set currentTrack = nil as STOPPED state should preserve track metadata
 		sendStoppedStateEvent()
 
 		// Update now playing info to reflect a stopped state but keep the artwork intact.
-		updateNowPlayingInfo(time: 0, rate: 0)
+		updateNowPlayingInfo(time: rangeStartMs / 1000, rate: 0)
 	}
 
 	/// Resets the player to IDLE state, fully tears down the player instance,
@@ -632,6 +653,7 @@ class AudioPro: RCTEventEmitter {
 
 		// Reset pending start time
 		pendingStartTimeMs = nil
+		seekGate.reset()
 
 		shouldBePlaying = false
 
@@ -722,14 +744,24 @@ class AudioPro: RCTEventEmitter {
 		}
 
 		// Ensure position is within valid range
-		let validPosition = max(0, min(targetPosition, duration))
+		let validPosition = clampToRange(targetPosition * 1000, durationMs: duration * 1000) / 1000
 		let time = CMTime(seconds: validPosition, preferredTimescale: 1000)
+		if pendingStartTimeMs != nil {
+			pendingStartTimeMs = nil
+			_ = seekGate.beginInitial()
+		}
+		let seekToken = seekGate.beginSeek()
 
-		player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
-			guard let self = self else { return }
+		player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak currentItem] completed in
+			guard let self = self, let currentItem = currentItem,
+				currentItem === self.player?.currentItem, self.seekGate.isCurrent(seekToken) else { return }
+			let resumesInitialPlayback = self.seekGate.complete(seekToken, completed: completed)
 			if completed {
 				self.updateNowPlayingInfoWithCurrentTime(validPosition)
 				self.completeSeekingAndSendSeekCompleteNoticeEvent(newPosition: validPosition * 1000)
+				if resumesInitialPlayback && self.shouldBePlaying {
+					player.rate = self.currentPlaybackSpeed
+				}
 
 				// Force update the now playing info to ensure controls work
 				if isAbsolute { // Only do this for absolute seeks to avoid redundant updates
@@ -795,7 +827,9 @@ class AudioPro: RCTEventEmitter {
 		}
 
 		log("Setting playback speed to ", speed)
-		player.rate = Float(speed)
+		if pendingStartTimeMs == nil && !isSeekingInitialPosition {
+			player.rate = Float(speed)
+		}
 
 		updateNowPlayingInfo(rate: Float(speed))
 
@@ -831,7 +865,7 @@ class AudioPro: RCTEventEmitter {
 	 *   - TRACK_ENDED
 	 */
 	@objc private func playerItemDidPlayToEndTime(_ notification: Notification) {
-		guard let _ = player?.currentItem else { return }
+		guard let item = notification.object as? AVPlayerItem, item === player?.currentItem else { return }
 
 		if isInErrorState {
 			log("Ignoring track end notification while in ERROR state")
@@ -844,16 +878,17 @@ class AudioPro: RCTEventEmitter {
 		lastEmittedState = ""
 		shouldBePlaying = false
 
-		player?.seek(to: .zero)
+		player?.pause()
+		player?.seek(to: CMTime(seconds: rangeStartMs / 1000, preferredTimescale: 1000))
 		stopTimer()
 
-		updateNowPlayingInfo(time: 0, rate: 0)
+		updateNowPlayingInfo(time: rangeStartMs / 1000, rate: 0)
 
-		sendStateEvent(state: STATE_STOPPED, position: 0, duration: info.duration, track: currentTrack)
+		sendStateEvent(state: STATE_STOPPED, position: Int(rangeStartMs), duration: info.duration, track: currentTrack)
 
 		if hasListeners {
 			let payload: [String: Any] = [
-				"position": info.duration,
+				"position": Int(clampToRange(rangeEndMs ?? Double(info.duration), durationMs: Double(info.duration))),
 				"duration": info.duration
 			]
 			sendEvent(type: EVENT_TYPE_TRACK_ENDED, track: currentTrack, payload: payload)
@@ -880,9 +915,19 @@ class AudioPro: RCTEventEmitter {
 				switch item.status {
 				case .readyToPlay:
 					log("Player item ready to play")
-					if let pendingStartTimeMs = pendingStartTimeMs {
-						performSeek(to: pendingStartTimeMs, isAbsolute: true)
+					if let pendingStartTimeMs = pendingStartTimeMs, item === player?.currentItem {
 						self.pendingStartTimeMs = nil
+						let seekToken = seekGate.beginInitial()
+						let position = clampToRange(pendingStartTimeMs, durationMs: item.duration.seconds * 1000)
+						// Le seek est terminé avant le premier échantillon audible.
+						player?.seek(to: CMTime(seconds: position / 1000, preferredTimescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak item] completed in
+							guard let self = self, let item = item, item === self.player?.currentItem,
+								self.seekGate.isCurrent(seekToken) else { return }
+							let resumesInitialPlayback = self.seekGate.complete(seekToken, completed: completed)
+							guard completed else { return }
+							self.completeSeekingAndSendSeekCompleteNoticeEvent(newPosition: position)
+							if resumesInitialPlayback && self.shouldBePlaying { self.player?.rate = self.currentPlaybackSpeed }
+						}
 					}
 				case .failed:
 					if let error = item.error {
@@ -973,7 +1018,7 @@ class AudioPro: RCTEventEmitter {
 	}
 
 	private func sendStoppedStateEvent() {
-		sendStateEvent(state: STATE_STOPPED, position: 0, duration: 0, track: currentTrack)
+		sendStateEvent(state: STATE_STOPPED, position: Int(rangeStartMs), duration: 0, track: currentTrack)
 	}
 
 	private func sendPlayingStateEvent() {

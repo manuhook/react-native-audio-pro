@@ -19,6 +19,10 @@ export type AudioProTrack = {
 	artwork: AudioProArtwork;
 	album?: string;
 	artist?: string;
+	/** Début inclus de la plage, en millisecondes absolues dans le média. */
+	startMs?: number;
+	/** Fin exclusive de la plage. La fin est appliquée par le lecteur natif. */
+	endMs?: number;
 	[key: string]: unknown; // custom properties
 };
 
@@ -86,7 +90,7 @@ export interface AudioProTrackEndedPayload {
 }
 
 export interface AudioProTrackTransitionedPayload {
-	/** Position in the new active track (0) */
+	/** Position absolue dans la nouvelle piste (startMs pour un extrait). */
 	position: number;
 	/** Duration of the new active track, 0 if not yet known */
 	duration: number;
