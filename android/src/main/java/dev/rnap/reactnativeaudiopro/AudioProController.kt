@@ -3,6 +3,7 @@ package dev.rnap.reactnativeaudiopro
 import android.content.ComponentName
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
 import android.util.Log
 import androidx.core.net.toUri
 import androidx.media3.common.C
@@ -39,6 +40,12 @@ object AudioProController {
 	// it by itself when the active track ends, so the hand-off needs no JS —
 	// React Native may not run JS timely while the app is backgrounded.
 	private var queuedTrack: ReadableMap? = null
+	private var mediaItemSequence = 0L
+
+	private fun playbackRange(track: ReadableMap? = activeTrack): PlaybackRange = PlaybackRange(
+		if (track?.hasKey("startMs") == true) track.getDouble("startMs").toLong() else 0L,
+		if (track?.hasKey("endMs") == true) track.getDouble("endMs").toLong() else null
+	)
 	// Serialises play() and setNextTrack() (both run as Main coroutines, in
 	// call order — the mutex is fair). JS fires them back to back: play() then
 	// setNextTrack(next). Without this, play() posted its ExoPlayer work one
@@ -289,10 +296,10 @@ object AudioProController {
 		ensurePreparedForNewPlayback()
 		activeTrack = track
 
-                // If startTimeMs is provided, set a pending seek position
-                if (opts.startTimeMs != null) {
-                        flowPendingSeekPosition = opts.startTimeMs
-                }
+		// La position est appliquée avant prepare/play pour ne jamais jouer le début
+		// du média avant le seek de reprise ou le début de l'extrait.
+		val initialPosition = playbackRange().clamp(opts.startTimeMs ?: 0L, 0L)
+		flowPendingSeekPosition = null
 
 		log(
 			"Configured with " +
@@ -340,7 +347,7 @@ object AudioProController {
 			// Set the new media item and prepare the player. setMediaItem
 			// replaces the whole playlist, so any queued track is gone too.
 			queuedTrack = null
-			it.setMediaItem(mediaItem)
+			it.setMediaItem(mediaItem, initialPosition)
 			it.prepare()
 
 			// Set playback speed regardless of autoPlay
@@ -369,6 +376,10 @@ object AudioProController {
 			.setTitle(title)
 			.setArtist(artist)
 			.setAlbumTitle(album)
+			.setExtras(Bundle().apply {
+				putLong("audioPro.startMs", playbackRange(track).startMs)
+				playbackRange(track).endMs?.let { putLong("audioPro.endMs", it) }
+			})
 
 		if (artwork != null) {
 			metadataBuilder.setArtworkUri(artwork)
@@ -380,7 +391,7 @@ object AudioProController {
 
 		return MediaItem.Builder()
 			.setUri(uri)
-			.setMediaId(mediaId)
+			.setMediaId("${mediaId}_${++mediaItemSequence}")
 			.setMediaMetadata(metadataBuilder.build())
 			.build()
 	}
@@ -419,10 +430,19 @@ object AudioProController {
 				log("setNextTrack ignored: missing track URL")
 				return
 			}
-			browser.addMediaItem(buildMediaItem(track, url, "queued_track"))
 			queuedTrack = track
+			browser.addMediaItem(buildMediaItem(track, url, "queued_track"))
 			log("setNextTrack queued", track.getString("title"), "playlist size=", browser.mediaItemCount)
 		}
+	}
+
+	// Appelé par le service natif à la borne, sans dépendre d'un réveil de JS.
+	fun onRangeEnded(mediaId: String, position: Long, duration: Long) {
+		if (enginerBrowser?.currentMediaItem?.mediaId != mediaId) return
+		stopProgressTimer()
+		flowPendingSeekPosition = null
+		emitState(AudioProModule.STATE_STOPPED, playbackRange().startMs, duration, "range end")
+		emitNotice(AudioProModule.EVENT_TYPE_TRACK_ENDED, position, duration, "range end")
 	}
 
 	fun pause() {
@@ -471,12 +491,12 @@ object AudioProController {
 			}
 
 			enginerBrowser?.stop()
-			enginerBrowser?.seekTo(0)
+			enginerBrowser?.seekTo(playbackRange().startMs)
 			enginerBrowser?.let {
 				// Use position 0 for STOPPED state as per logic.md contract
 				val dur = it.duration.takeIf { d -> d > 0 } ?: 0L
 				// Do not set currentTrack = null as STOPPED state should preserve track metadata
-				emitState(AudioProModule.STATE_STOPPED, 0L, dur, "stop()")
+				emitState(AudioProModule.STATE_STOPPED, playbackRange().startMs, dur, "stop()")
 			}
 		}
 		stopProgressTimer()
@@ -603,11 +623,7 @@ object AudioProController {
 		ensureSession()
 		runOnUiThread {
 			val dur = enginerBrowser?.duration ?: 0L
-			val validPosition = when {
-				position < 0 -> 0L
-				position > dur -> dur
-				else -> position
-			}
+			val validPosition = playbackRange().clamp(position, dur)
 
 			// Set pending seek position
 			flowPendingSeekPosition = validPosition
@@ -757,7 +773,7 @@ object AudioProController {
 						enginerBrowser?.pause()
 
 						// 2. Seek to position 0
-						enginerBrowser?.seekTo(0)
+						enginerBrowser?.seekTo(playbackRange().startMs)
 
 						// 3. Cancel any pending seek operations
 						flowPendingSeekPosition = null
@@ -765,7 +781,7 @@ object AudioProController {
 						// 4. Emit STOPPED (stopped = loaded but at 0, not playing)
 						emitState(
 							AudioProModule.STATE_STOPPED,
-							0L,
+							playbackRange().startMs,
 							dur,
 							"onPlaybackStateChanged(STATE_ENDED)"
 						)
@@ -800,7 +816,9 @@ object AudioProController {
 			 * fires for this hand-off, so neither STOPPED nor TRACK_ENDED do.
 			 */
 			override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-				if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return
+				if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+					reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) return
+				if (enginerBrowser?.currentMediaItemIndex == 0) return
 				val next = queuedTrack ?: run {
 					log("onMediaItemTransition(AUTO) without a queued track, ignoring")
 					return
@@ -818,7 +836,7 @@ object AudioProController {
 				val dur = enginerBrowser?.duration ?: 0L
 				emitNotice(
 					AudioProModule.EVENT_TYPE_TRACK_TRANSITIONED,
-					0L,
+					playbackRange().startMs,
 					dur,
 					"onMediaItemTransition(AUTO)"
 				)
@@ -829,6 +847,9 @@ object AudioProController {
 				newPosition: Player.PositionInfo,
 				reason: Int
 			) {
+				// Le changement d'élément est adopté par TRACK_TRANSITIONED ; ne pas
+				// attribuer sa nouvelle position aux métadonnées de l'ancienne piste.
+				if (oldPosition.mediaItemIndex != newPosition.mediaItemIndex) return
 				if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
 					log("Seek completed: position=${newPosition.positionMs}, reason=$reason")
 					val dur = enginerBrowser?.duration ?: 0L
