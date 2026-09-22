@@ -70,6 +70,7 @@ export interface AudioProEvent {
 	track: AudioProTrack | null; // Required for all events except REMOTE_NEXT and REMOTE_PREV
 	payload?: {
 		state?: AudioProState;
+		isActuallyPlaying?: boolean;
 		position?: number;
 		duration?: number;
 		error?: string;

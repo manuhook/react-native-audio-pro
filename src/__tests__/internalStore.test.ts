@@ -49,6 +49,17 @@ describe('internalStore.updateFromEvent', () => {
 		jest.restoreAllMocks();
 	});
 
+	it('le transport effectif ne modifie pas le statut des contrôles', () => {
+		resetStore({ playerState: AudioProState.PLAYING, position: 1234 });
+		const before = internalStore.getState();
+		before.updateFromEvent({
+			type: AudioProEventType.PLAYBACK_ACTIVITY_CHANGED,
+			track: null,
+			payload: { isActuallyPlaying: false, position: 5678, duration: 60000 },
+		});
+		expect(internalStore.getState()).toBe(before);
+	});
+
 	it('warns when a non-error event omits the track payload', () => {
 		const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 

@@ -35,6 +35,8 @@ export declare enum AudioProState {
 export declare enum AudioProEventType {
     /** Player state has changed */
     STATE_CHANGED = "STATE_CHANGED",
+    /** Lecture effective native, indépendante de la demande play et du buffering. */
+    PLAYBACK_ACTIVITY_CHANGED = "PLAYBACK_ACTIVITY_CHANGED",
     /** Playback progress update */
     PROGRESS = "PROGRESS",
     /** Track has ended */

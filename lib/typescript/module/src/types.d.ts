@@ -41,6 +41,7 @@ export interface AudioProEvent {
     track: AudioProTrack | null;
     payload?: {
         state?: AudioProState;
+        isActuallyPlaying?: boolean;
         position?: number;
         duration?: number;
         error?: string;

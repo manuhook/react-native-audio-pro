@@ -57,6 +57,9 @@ class AudioPro: RCTEventEmitter {
 	private var shouldBePlaying = false
 	private var isRemoteCommandCenterSetup = false
 
+	private var playbackActivityObservation: NSKeyValueObservation?
+	private var lastPlaybackActivity: Bool?
+	private var lastPlaybackActivityTrackId: String?
 	private var isRateObserverAdded = false
 	private var isStatusObserverAdded = false
 
@@ -275,6 +278,9 @@ class AudioPro: RCTEventEmitter {
 	/// - Does not emit any state or clear currentTrack
 	/// - Does not destroy the media session
 	private func prepareForNewPlayback() {
+		playbackActivityObservation?.invalidate()
+		playbackActivityObservation = nil
+		lastPlaybackActivity = nil
 		// Pause the player if it's playing
 		player?.pause()
 
@@ -433,6 +439,14 @@ class AudioPro: RCTEventEmitter {
 		// Add rate observer to the player
 		player?.addObserver(self, forKeyPath: "rate", options: [.new], context: nil)
 		isRateObserverAdded = true
+
+		// La vitesse demandée peut rester non nulle pendant le buffering.
+		// Observer le transport réel, sans timer ni changement de STATE_CHANGED.
+		playbackActivityObservation = player?.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak item] observed, _ in
+			guard let self = self, let item = item,
+				observed === self.player, observed.currentItem === item else { return }
+			self.emitPlaybackActivity()
+		}
 
 		// Set up volume to ensure it's applied before playback starts
 		player?.volume = activeVolume
@@ -650,6 +664,11 @@ class AudioPro: RCTEventEmitter {
 	/// - Parameter clearTrack: Whether to clear the currentTrack (default: true)
 	@objc func cleanup(emitStateChange: Bool = true, clearTrack: Bool = true) {
 		log("Cleanup", "emitStateChange:", emitStateChange, "clearTrack:", clearTrack)
+		shouldBePlaying = false
+		emitPlaybackActivity()
+		playbackActivityObservation?.invalidate()
+		playbackActivityObservation = nil
+		lastPlaybackActivity = nil
 
 		// Reset pending start time
 		pendingStartTimeMs = nil
@@ -753,6 +772,7 @@ class AudioPro: RCTEventEmitter {
 			_ = seekGate.beginInitial()
 		}
 		let seekToken = seekGate.beginSeek()
+		emitPlaybackActivity()
 		let executeSeek = { [weak self, weak currentItem] in
 			guard let self = self, let currentItem = currentItem,
 				currentItem === self.player?.currentItem, self.seekGate.isCurrent(seekToken) else { return }
@@ -786,6 +806,7 @@ class AudioPro: RCTEventEmitter {
 						}
 					}
 				} else if player.rate != 0 {
+					self.emitPlaybackActivity(force: true)
 					self.startProgressTimer()
 				}
 			}
@@ -825,6 +846,7 @@ class AudioPro: RCTEventEmitter {
 			]
 			sendEvent(type: EVENT_TYPE_SEEK_COMPLETE, track: info.track, payload: payload)
 		}
+		emitPlaybackActivity(force: true)
 		if player?.rate != 0 {
 			// Resume progress timer after a short delay to ensure UI is in sync
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
@@ -1039,6 +1061,24 @@ class AudioPro: RCTEventEmitter {
 
 	private func sendStoppedStateEvent() {
 		sendStateEvent(state: STATE_STOPPED, position: Int(rangeStartMs), duration: 0, track: currentTrack)
+	}
+
+	// Inclure la position au changement de transport évite d’attendre le tick
+	// de progression suivant pour démarrer/recaler les mots.
+	private func emitPlaybackActivity(force: Bool = false) {
+		guard hasListeners else { return }
+		let active = !isInErrorState && shouldBePlaying && pendingStartTimeMs == nil
+			&& !seekGate.isSeeking && !seekGate.isInitialPending && player?.timeControlStatus == .playing
+		let trackId = currentTrack?["id"] as? String
+		guard force || active != lastPlaybackActivity || trackId != lastPlaybackActivityTrackId else { return }
+		let info = getPlaybackInfo()
+		sendEvent(type: "PLAYBACK_ACTIVITY_CHANGED", track: currentTrack, payload: [
+			"isActuallyPlaying": active,
+			"position": info.position,
+			"duration": info.duration
+		])
+		lastPlaybackActivity = active
+		lastPlaybackActivityTrackId = trackId
 	}
 
 	private func sendPlayingStateEvent() {
