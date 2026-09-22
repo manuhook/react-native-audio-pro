@@ -7,6 +7,7 @@ jest.mock('react-native', () => ({
 	NativeModules: {
 		AudioPro: {
 			play: jest.fn(),
+			setNextTrack: jest.fn(),
 			pause: jest.fn(),
 			resume: jest.fn(),
 			stop: jest.fn(),
@@ -81,7 +82,5 @@ function createEmitterMock(modulePath) {
 }
 
 createInternalStoreMock('./src/internalStore');
-createInternalStoreMock('./.conductor/hong-kong/src/internalStore');
 
 createEmitterMock('./src/emitter');
-createEmitterMock('./.conductor/hong-kong/src/emitter');

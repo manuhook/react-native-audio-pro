@@ -223,4 +223,33 @@ describe('internalStore.updateFromEvent', () => {
 
 		expect(internalStore.getState().trackPlaying).toMatchObject(track2);
 	});
+	it('adopts a native automatic transition and ignores subsequent stale metadata', () => {
+		const previous = {
+			id: 'previous',
+			url: 'https://example.com/previous.mp3',
+			title: 'Previous',
+			artwork: 'art.jpg',
+		};
+		const next = {
+			...previous,
+			id: 'next',
+			url: 'https://example.com/next.mp3',
+			title: 'Next',
+			rangeStartMs: 5000,
+			rangeEndMs: 10000,
+		};
+		resetStore({ trackPlaying: previous, playerState: AudioProState.PLAYING });
+		internalStore.getState().updateFromEvent({
+			type: AudioProEventType.TRACK_TRANSITIONED,
+			track: next,
+			payload: { position: 5000, duration: 20000 },
+		});
+		expect(internalStore.getState().trackPlaying).toEqual(next);
+		expect(internalStore.getState().position).toBe(5000);
+		expect(internalStore.getState().playerState).toBe(AudioProState.PLAYING);
+		internalStore
+			.getState()
+			.updateFromEvent({ type: AudioProEventType.PROGRESS, track: previous, payload: {} });
+		expect(internalStore.getState().trackPlaying).toEqual(next);
+	});
 });

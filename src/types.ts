@@ -19,6 +19,10 @@ export type AudioProTrack = {
 	artwork: AudioProArtwork;
 	album?: string;
 	artist?: string;
+	/** Début inclus de la plage, en millisecondes absolues dans le média. */
+	startMs?: number;
+	/** Fin exclusive de la plage. La fin est appliquée par le lecteur natif. */
+	endMs?: number;
 	[key: string]: unknown; // custom properties
 };
 
@@ -85,6 +89,13 @@ export interface AudioProTrackEndedPayload {
 	duration: number;
 }
 
+export interface AudioProTrackTransitionedPayload {
+	/** Position absolue dans la nouvelle piste (startMs pour un extrait). */
+	position: number;
+	/** Duration of the new active track, 0 if not yet known */
+	duration: number;
+}
+
 export interface AudioProPlaybackErrorPayload {
 	error: string;
 	errorCode?: number;
@@ -113,6 +124,20 @@ export interface AudioProPlaybackSpeedChangedPayload {
 export interface AmbientAudioPlayOptions {
 	url: string;
 	loop?: boolean;
+}
+
+/**
+ * Options for ambientPause(). When provided, the native side holds full volume
+ * for `holdMs`, ramps linearly to silence over `fadeMs`, then pauses. The ramp
+ * runs natively so it completes even while the app is backgrounded (JS timers
+ * are frozen on Android in background). A subsequent ambientResume(),
+ * ambientPlay() or ambientStop() cancels the pending fade.
+ */
+export interface AmbientAudioPauseOptions {
+	/** Full-volume hold before the ramp, in milliseconds (default: 0) */
+	holdMs?: number;
+	/** Linear ramp duration down to silence, in milliseconds (default: 0 = immediate pause) */
+	fadeMs?: number;
 }
 
 export type AudioProAmbientEventCallback = (event: AudioProAmbientEvent) => void;

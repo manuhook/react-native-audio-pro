@@ -75,6 +75,7 @@ repositories {
 def kotlin_version = getExtOrDefault("kotlinVersion")
 
 dependencies {
+	testImplementation "junit:junit:4.13.2"
 	implementation "com.facebook.react:react-android"
 	implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 

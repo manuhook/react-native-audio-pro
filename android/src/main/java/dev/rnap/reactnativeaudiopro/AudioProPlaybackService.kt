@@ -31,6 +31,7 @@ open class AudioProPlaybackService : MediaLibraryService() {
 
 	private lateinit var mediaLibrarySession: MediaLibrarySession
 	private lateinit var player: ExoPlayer
+	private var rangeController: AudioProRangeController? = null
 
 	companion object {
 		private const val NOTIFICATION_ID = 789
@@ -106,6 +107,17 @@ open class AudioProPlaybackService : MediaLibraryService() {
 	override fun onTaskRemoved(rootIntent: android.content.Intent?) {
 		android.util.Log.d("AudioProPlaybackService", "Task removed, stopping service")
 
+		// The whole app is going away, but the app process (and the JS runtime)
+		// usually survives a swipe-away for a while: stop the ambient player too
+		// (it lives in the process, not in this service, and kept playing), and
+		// make the controller forget this session — with a STOPPED for JS — so
+		// the next play() rebuilds it instead of talking to a dead browser.
+		AudioProAmbientController.ambientStop()
+		AudioProController.dropSession("onTaskRemoved", emitStopped = true)
+
+		rangeController?.release()
+		rangeController = null
+
 		// Force stop playback and release resources
 		try {
 			val hasSession = ::mediaLibrarySession.isInitialized
@@ -133,6 +145,8 @@ open class AudioProPlaybackService : MediaLibraryService() {
 	// MediaSessionService.clearListener
 	@OptIn(UnstableApi::class)
 	override fun onDestroy() {
+		rangeController?.release()
+		rangeController = null
 		android.util.Log.d("AudioProPlaybackService", "Service being destroyed")
 
 		// Make sure to release all resources
@@ -226,6 +240,7 @@ open class AudioProPlaybackService : MediaLibraryService() {
 		player.repeatMode = Player.REPEAT_MODE_OFF
 		player.addAnalyticsListener(EventLogger())
 		player.addListener(playbackListener)
+		rangeController = AudioProRangeController(player).also { player.addListener(it) }
 
 		mediaLibrarySession =
 			MediaLibrarySession.Builder(this, player, createLibrarySessionCallback())
@@ -291,13 +306,15 @@ open class AudioProPlaybackService : MediaLibraryService() {
 	}
 
 	private fun ensureNotificationChannel(notificationManagerCompat: NotificationManagerCompat) {
-		val channel =
-			NotificationChannel(
-				CHANNEL_ID,
-				"audio_pro_notification_channel",
-				NotificationManager.IMPORTANCE_DEFAULT,
-			)
-		notificationManagerCompat.createNotificationChannel(channel)
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			val channel =
+				NotificationChannel(
+					CHANNEL_ID,
+					"audio_pro_notification_channel",
+					NotificationManager.IMPORTANCE_DEFAULT,
+				)
+			notificationManagerCompat.createNotificationChannel(channel)
+		}
 	}
 
 	private fun updateForegroundState(currentPlayer: Player) {

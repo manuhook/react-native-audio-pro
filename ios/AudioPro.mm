@@ -17,7 +17,7 @@ RCT_EXTERN_METHOD(clear)
 RCT_EXTERN_METHOD(ambientPlay:(NSDictionary *)options)
 RCT_EXTERN_METHOD(ambientStop)
 RCT_EXTERN_METHOD(ambientSetVolume:(double)volume)
-RCT_EXTERN_METHOD(ambientPause)
+RCT_EXTERN_METHOD(ambientPause:(NSDictionary *)options)
 RCT_EXTERN_METHOD(ambientResume)
 RCT_EXTERN_METHOD(ambientSeekTo:(double)positionMs)
 

@@ -150,9 +150,10 @@ export const internalStore = create<AudioProStore>((set, get) => ({
 		if (track) {
 			const prev = current.trackPlaying;
 			const eventSignalsTrackSwap =
-				type === AudioProEventType.STATE_CHANGED &&
-				(payload?.state === AudioProState.LOADING ||
-					payload?.state === AudioProState.PLAYING);
+				type === AudioProEventType.TRACK_TRANSITIONED ||
+				(type === AudioProEventType.STATE_CHANGED &&
+					(payload?.state === AudioProState.LOADING ||
+						payload?.state === AudioProState.PLAYING));
 			const shouldAdoptTrack = !prev || tracksMatch(prev, track) || eventSignalsTrackSwap;
 
 			if (shouldAdoptTrack && (!prev || hasTrackMetadataChanged(prev, track))) {
