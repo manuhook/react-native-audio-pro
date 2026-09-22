@@ -27,6 +27,7 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 
 		const val EVENT_TYPE_STATE_CHANGED = "STATE_CHANGED"
 		const val EVENT_TYPE_TRACK_ENDED = "TRACK_ENDED"
+		const val EVENT_TYPE_TRACK_TRANSITIONED = "TRACK_TRANSITIONED"
 		const val EVENT_TYPE_PLAYBACK_ERROR = "PLAYBACK_ERROR"
 		const val EVENT_TYPE_PROGRESS = "PROGRESS"
 		const val EVENT_TYPE_SEEK_COMPLETE = "SEEK_COMPLETE"
@@ -49,6 +50,15 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 	fun play(track: ReadableMap, options: ReadableMap) {
 		CoroutineScope(Dispatchers.Main).launch {
 			AudioProController.play(track, options)
+		}
+	}
+
+	@ReactMethod
+	fun setNextTrack(track: ReadableMap?) {
+		// Same dispatcher as play(): Main coroutines run in call order, and the
+		// controller serialises both behind one mutex.
+		CoroutineScope(Dispatchers.Main).launch {
+			AudioProController.setNextTrack(track)
 		}
 	}
 
@@ -113,8 +123,8 @@ class AudioProModule(private val reactContext: ReactApplicationContext) :
 	}
 
 	@ReactMethod
-	fun ambientPause() {
-		AudioProAmbientController.ambientPause()
+	fun ambientPause(options: ReadableMap?) {
+		AudioProAmbientController.ambientPause(options)
 	}
 
 	@ReactMethod

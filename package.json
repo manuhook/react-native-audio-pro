@@ -1,6 +1,6 @@
 {
 	"name": "react-native-audio-pro",
-	"version": "11.0.0-beta.2",
+	"version": "11.0.0-dv.1",
 	"description": "A React Native module for audio playback from remote URLs, ideal for audiobook and podcast apps, with background playback, lock screen notification controls on Android and iOS, and web support.",
 	"source": "./src/index",
 	"react-native": "./src/index",
@@ -8,13 +8,13 @@
 	"main": "./lib/commonjs/index.js",
 	"module": "./lib/module/index.js",
 	"scripts": {
-		"example": "yarn workspace react-native-audio-pro-example",
+		"example": "npm --prefix example run",
 		"test": "jest",
-		"check": "yarn lint && yarn typecheck && yarn prepare && yarn test",
+		"check": "yarn lint && yarn typecheck && yarn build && yarn test --watchman=false",
 		"typecheck": "tsc",
 		"lint": "eslint \"**/*.{js,ts,tsx}\"",
 		"clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
-		"prepare": "bob build",
+		"build": "bob build",
 		"release": "release-it"
 	},
 	"exports": {
@@ -120,10 +120,6 @@
 		"react": "*",
 		"react-native": "*"
 	},
-	"workspaces": [
-		"example"
-	],
-	"packageManager": "yarn@4.12.0",
 	"dependencies": {
 		"zustand": "^5.0.3"
 	}

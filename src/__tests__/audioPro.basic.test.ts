@@ -1,4 +1,4 @@
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 
 import { AudioPro } from '../audioPro';
 import { internalStore } from '../internalStore';
@@ -256,5 +256,45 @@ describe('AudioPro clear functionality', () => {
 		expect(NativeModules.AudioPro.clear).toHaveBeenCalled();
 		expect(internalStore.getState().setTrackPlaying).toHaveBeenCalledWith(null);
 		expect(internalStore.getState().setVolume).toHaveBeenCalledWith(1.0);
+	});
+});
+
+describe('AudioPro setNextTrack', () => {
+	const track = {
+		id: 'next-track',
+		url: 'https://example.com/next.mp3',
+		title: 'Next Track',
+		artwork: 'https://example.com/next.jpg',
+	};
+
+	afterEach(() => {
+		Platform.OS = 'ios';
+	});
+
+	it('is ignored on iOS (track ends with TRACK_ENDED as usual)', () => {
+		AudioPro.setNextTrack(track);
+		expect(NativeModules.AudioPro.setNextTrack).not.toHaveBeenCalled();
+	});
+
+	it('queues the track natively on Android', () => {
+		Platform.OS = 'android';
+		AudioPro.setNextTrack(track);
+		expect(NativeModules.AudioPro.setNextTrack).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'next-track', url: 'https://example.com/next.mp3' }),
+		);
+	});
+
+	it('clears the queue with null on Android', () => {
+		Platform.OS = 'android';
+		AudioPro.setNextTrack(null);
+		expect(NativeModules.AudioPro.setNextTrack).toHaveBeenCalledWith(null);
+	});
+
+	it('rejects an invalid track without calling native', () => {
+		Platform.OS = 'android';
+		const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+		AudioPro.setNextTrack({ ...track, url: '' });
+		expect(NativeModules.AudioPro.setNextTrack).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
 	});
 });

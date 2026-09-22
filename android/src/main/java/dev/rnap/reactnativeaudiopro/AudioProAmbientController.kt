@@ -2,6 +2,7 @@ package dev.rnap.reactnativeaudiopro
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -25,12 +26,22 @@ object AudioProAmbientController {
 	private const val EVENT_TYPE_AMBIENT_TRACK_ENDED = "AMBIENT_TRACK_ENDED"
 	private const val EVENT_TYPE_AMBIENT_ERROR = "AMBIENT_ERROR"
 
+	private const val FADE_STEP_MS = 50L
+
 	private var reactContext: ReactApplicationContext? = null
 	private var enginePlayerAmbient: ExoPlayer? = null
 	private var engineListenerAmbient: Player.Listener? = null
 	private var settingDebugAmbient: Boolean = false
 	private var settingLoopAmbient: Boolean = true
 	private var settingVolumeAmbient: Float = 1.0f
+
+	// Fade-out state for ambientPause({ holdMs, fadeMs }). The ramp runs on the
+	// main looper (native Handler), so it keeps ticking while the app is
+	// backgrounded — unlike JS timers, which React Native freezes on Android
+	// when the host activity is paused. All access happens on the UI thread.
+	private var fadeGainAmbient: Float = 1.0f
+	private var fadeRunnableAmbient: Runnable? = null
+	private val fadeHandlerAmbient = Handler(Looper.getMainLooper())
 
 	/**
 	 * Set the React context
@@ -125,6 +136,7 @@ object AudioProAmbientController {
 		log("Ambient Stop")
 
 		runOnUiThread {
+			cancelAmbientFade()
 			enginePlayerAmbient?.let { exo ->
 				engineListenerAmbient?.let { exo.removeListener(it) }
 				exo.stop()
@@ -138,24 +150,92 @@ object AudioProAmbientController {
 	/**
 	 * Pause ambient audio playback
 	 * No-op if already paused or not playing
+	 *
+	 * Optional fade-out: `options` may carry `holdMs` (full volume hold before
+	 * the ramp) and `fadeMs` (linear ramp duration down to silence). With no
+	 * options (or both at 0), pauses immediately — previous behavior.
+	 * A pending fade is cancelled by ambientResume/ambientPlay/ambientStop.
 	 */
-	fun ambientPause() {
-		log("Ambient Pause")
+	fun ambientPause(options: ReadableMap?) {
+		val holdMs =
+			if (options?.hasKey("holdMs") == true) options.getDouble("holdMs").toLong() else 0L
+		val fadeMs =
+			if (options?.hasKey("fadeMs") == true) options.getDouble("fadeMs").toLong() else 0L
+		log("Ambient Pause", "holdMs=$holdMs", "fadeMs=$fadeMs")
 
 		runOnUiThread {
-			enginePlayerAmbient?.pause()
+			cancelAmbientFade()
+			val player = enginePlayerAmbient ?: return@runOnUiThread
+			if (holdMs <= 0L && fadeMs <= 0L) {
+				player.pause()
+				return@runOnUiThread
+			}
+			startAmbientFadeOut(holdMs, fadeMs)
 		}
 	}
 
 	/**
 	 * Resume ambient audio playback
 	 * No-op if already playing or no active track
+	 * Cancels a pending fade-out and restores full volume before resuming.
 	 */
 	fun ambientResume() {
 		log("Ambient Resume")
 
 		runOnUiThread {
+			cancelAmbientFade()
 			enginePlayerAmbient?.play()
+		}
+	}
+
+	/**
+	 * Start the fade-out ramp: hold at full volume for holdMs, ramp linearly to
+	 * silence over fadeMs, then pause the player and restore full volume (the
+	 * player is paused at that point, so the restore is inaudible and the next
+	 * resume starts at the user volume). Must be called on the UI thread.
+	 */
+	private fun startAmbientFadeOut(holdMs: Long, fadeMs: Long) {
+		val startedAt = SystemClock.uptimeMillis()
+		val step = object : Runnable {
+			override fun run() {
+				if (fadeRunnableAmbient !== this) return
+				val player = enginePlayerAmbient ?: run {
+					fadeRunnableAmbient = null
+					fadeGainAmbient = 1.0f
+					return
+				}
+				val elapsed = SystemClock.uptimeMillis() - startedAt
+				val gain = when {
+					elapsed < holdMs -> 1.0f
+					fadeMs <= 0L -> 0.0f
+					else -> (1.0f - (elapsed - holdMs).toFloat() / fadeMs).coerceIn(0.0f, 1.0f)
+				}
+				fadeGainAmbient = gain
+				player.volume = settingVolumeAmbient * gain
+				if (gain <= 0.0f) {
+					fadeRunnableAmbient = null
+					player.pause()
+					fadeGainAmbient = 1.0f
+					player.volume = settingVolumeAmbient
+				} else {
+					fadeHandlerAmbient.postDelayed(this, FADE_STEP_MS)
+				}
+			}
+		}
+		fadeRunnableAmbient = step
+		fadeHandlerAmbient.post(step)
+	}
+
+	/**
+	 * Cancel a pending fade-out and restore full volume.
+	 * Must be called on the UI thread.
+	 */
+	private fun cancelAmbientFade() {
+		fadeRunnableAmbient?.let { fadeHandlerAmbient.removeCallbacks(it) }
+		fadeRunnableAmbient = null
+		if (fadeGainAmbient != 1.0f) {
+			fadeGainAmbient = 1.0f
+			enginePlayerAmbient?.volume = settingVolumeAmbient
 		}
 	}
 
@@ -181,7 +261,9 @@ object AudioProAmbientController {
 		log("Ambient Set Volume", volume)
 
 		runOnUiThread {
-			enginePlayerAmbient?.volume = volume
+			// Keep a running fade-out authoritative: apply the user volume
+			// scaled by the current fade gain.
+			enginePlayerAmbient?.volume = settingVolumeAmbient * fadeGainAmbient
 		}
 	}
 

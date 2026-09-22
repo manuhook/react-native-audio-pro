@@ -1,9 +1,9 @@
 # React Native Audio Pro
 
 > [!WARNING]
-> ## ⚠️ Archived / No Longer Maintained
+> ## Upstream archived
 > Thank you for using `react-native-audio-pro` and for contributing feedback, fixes, and ideas.
-> This project is now archived and no longer maintained.
+> The upstream project is archived and no longer maintained. This fork keeps the Divine Volonté audio extensions on `main`.
 > Feel free to fork this repository if you need changes for your own project.
 
 Modern, background-capable audio playback for React Native — built for podcasts, audiobooks, and long-form media. Works out of the box with background playback, lock screen controls, and clean hooks-based state. Under the hood: Android uses Media3 (not old-school ExoPlayer), giving you up-to-date media session support without any of the legacy baggage. iOS uses AVFoundation, Apple's native audio engine for professional-grade media playback. Supports static remote files on iOS and Android.
@@ -148,6 +148,7 @@ React Native Audio Pro supports various audio file formats including MP3, AAC, a
 | Method | Description | Return Value |
 | --- | --- | --- |
 | **play(track: AudioProTrack, options?: AudioProPlayOptions)** | Loads and starts playing the specified track. | `void` |
+| **setNextTrack(track: AudioProTrack \| null)** | Android: queues the track to play right after the current one (natively, no JS needed at the hand-off — works while the app is backgrounded). `null` clears the queue; `play()`/`stop()`/`clear()` drop it. Emits `TRACK_TRANSITIONED` at the hand-off. Ignored on iOS (track ends with `TRACK_ENDED` as usual). | `void` |
 | **pause()** | Pauses the current playback. | `void` |
 | **resume()** | Resumes playback if paused. | `void` |
 | **stop()** | Stops playback and resets position to `0` while keeping the current track loaded; use `clear()` to unload it. | `void` |
@@ -218,6 +219,7 @@ const playingTrack = useAudioPro((s) => s.playingTrack);
 | `STATE_CHANGED`          | Emitted when the player's state changes (e.g., from LOADING to PLAYING).                      |
 | `PROGRESS`               | Emitted approximately once per second during playback with current position and duration.     |
 | `TRACK_ENDED`            | Emitted when a track completes playback naturally.                                            |
+| `TRACK_TRANSITIONED`     | Android: the player moved on its own to the track queued with `setNextTrack()`; `track` is the new active track. No `TRACK_ENDED`/`STOPPED` for that hand-off. |
 | `SEEK_COMPLETE`          | Emitted when a seek operation completes. Payload includes `triggeredBy` (`USER` or `SYSTEM`). |
 | `PLAYBACK_SPEED_CHANGED` | Emitted when the playback speed is changed.                                                   |
 | `REMOTE_NEXT`            | Emitted when the user presses the "Next" button on lock screen controls.                      |

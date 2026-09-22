@@ -34,6 +34,8 @@ export type {
 	AudioProStateChangedPayload,
 	/** Payload for track ended events */
 	AudioProTrackEndedPayload,
+	/** Payload for track transitioned events (native hand-off to the queued track) */
+	AudioProTrackTransitionedPayload,
 	/** Payload for playback error events */
 	AudioProPlaybackErrorPayload,
 	/** Payload for progress update events */
@@ -46,6 +48,8 @@ export type {
 	// Ambient audio types
 	/** Options for ambient audio playback */
 	AmbientAudioPlayOptions,
+	/** Options for ambient audio pause (native fade-out) */
+	AmbientAudioPauseOptions,
 	/** Callback function type for ambient audio events */
 	AudioProAmbientEventCallback,
 	/** Type of ambient audio events that can be emitted */
