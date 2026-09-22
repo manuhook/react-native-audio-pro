@@ -24,6 +24,17 @@ struct PlaybackSeekGateTests {
 
 		let ordinary = gate.beginSeek()
 		assert(!gate.complete(ordinary, completed: true), "Un seek ordinaire ne commande pas play")
-		print("PlaybackSeekGate : 4 scénarios réussis")
+		assert(!gate.isSeeking)
+		let first = gate.beginSeek()
+		let latest = gate.beginSeek()
+		assert(gate.isSeeking, "Les mots attendent pendant un seek")
+		_ = gate.complete(first, completed: true)
+		assert(gate.isSeeking, "Une ancienne completion ne rouvre pas le transport")
+		_ = gate.complete(latest, completed: false)
+		assert(!gate.isSeeking, "Un seek ordinaire interrompu rend la main au transport natif")
+		_ = gate.beginSeek()
+		gate.reset()
+		assert(!gate.isSeeking, "Le reset efface la barrière de seek")
+		print("PlaybackSeekGate : 6 scénarios réussis")
 	}
 }

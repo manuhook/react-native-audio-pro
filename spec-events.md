@@ -94,3 +94,14 @@ If the player is **buffering mid-playback** (e.g. network stalls):
 - `PLAYBACK_ERROR` is **not linked** to `STATE_CHANGED: ERROR`. They may occur together or separately.
 - When a track ends, native is responsible for pausing, seeking to 0, and transitioning to `STOPPED`.
 - Developers and agents working on this code must enforce strict alignment with this contract. Do not improvise or assume implicit behaviors — follow explicit transitions only.
+
+
+## Lecture effective : PLAYBACK_ACTIVITY_CHANGED
+
+Événement indépendant de STATE_CHANGED : `payload.isActuallyPlaying` décrit
+le transport natif effectif, avec `position`, `duration` (ms absolues) et `track`.
+Android observe `Player.isPlaying` après les callbacks individuels (`onEvents`).
+iOS observe `AVPlayer.timeControlStatus` et bloque le signal pendant les seeks.
+L’événement est dédupliqué par activité et piste, sauf après un déplacement, qui
+réémet la position même si la lecture reste active. Il ne change pas le statut
+des contrôles ni la cadence des événements PROGRESS.

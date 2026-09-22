@@ -38,6 +38,8 @@ object AudioProController {
 	private var engineProgressRunnable: Runnable? = null
 	private var enginePlayerListener: Player.Listener? = null
 
+	private var lastPlaybackActivity: Boolean? = null
+	private var lastPlaybackActivityMediaId: String? = null
 	private var activeTrack: ReadableMap? = null
 	// Track queued right after the active one (setNextTrack). ExoPlayer moves to
 	// it by itself when the active track ends, so the hand-off needs no JS —
@@ -686,6 +688,12 @@ object AudioProController {
 
 		enginePlayerListener = object : Player.Listener {
 
+			// onEvents arrive après les callbacks individuels : piste et seek sont
+			// déjà réconciliés, y compris lors d’un enchaînement natif.
+			override fun onEvents(player: Player, events: Player.Events) {
+				emitPlaybackActivity(player, events.contains(Player.EVENT_POSITION_DISCONTINUITY))
+			}
+
 			override fun onIsPlayingChanged(isPlaying: Boolean) {
 				log("onIsPlayingChanged", "isPlaying=", isPlaying)
 				log(
@@ -1047,6 +1055,20 @@ object AudioProController {
 		flowLastEmittedDuration = sanitizedDuration
 		// Record time of this state emission
 		flowLastStateEmittedTimeMs = System.currentTimeMillis()
+	}
+
+	private fun emitPlaybackActivity(player: Player, force: Boolean = false) {
+		val active = player.isPlaying && !flowIsInErrorState && flowPendingSeekPosition == null
+		val mediaId = player.currentMediaItem?.mediaId
+		if (!force && active == lastPlaybackActivity && mediaId == lastPlaybackActivityMediaId) return
+		val payload = Arguments.createMap().apply {
+			putBoolean("isActuallyPlaying", active)
+			putDouble("position", player.currentPosition.coerceAtLeast(0L).toDouble())
+			putDouble("duration", player.duration.coerceAtLeast(0L).toDouble())
+		}
+		emitEvent("PLAYBACK_ACTIVITY_CHANGED", activeTrack, payload, "onEvents")
+		lastPlaybackActivity = active
+		lastPlaybackActivityMediaId = mediaId
 	}
 
 	private fun emitNotice(eventType: String, position: Long, duration: Long, reason: String = "") {
