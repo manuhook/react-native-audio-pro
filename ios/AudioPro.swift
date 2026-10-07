@@ -103,6 +103,12 @@ class AudioPro: RCTEventEmitter {
 		return false
 	}
 
+	// File propre : sans elle, React Native range le module sur la file série qu'il
+	// partage entre modules (réseau, feuilles, animations), et une attente
+	// d'AVFoundation les retient tous.
+	private let moduleQueue = DispatchQueue(label: "AudioPro.methodQueue")
+	override var methodQueue: DispatchQueue! { moduleQueue }
+
 	override func startObserving() {
 		hasListeners = true
 	}
@@ -454,7 +460,6 @@ class AudioPro: RCTEventEmitter {
 		nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
 		nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
 		nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
-		nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = item.asset.duration.seconds
 		MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
 
 		// Add notification observer for track completion to the new item
@@ -476,8 +481,20 @@ class AudioPro: RCTEventEmitter {
 
 		if autoPlay && pendingStartTimeMs == nil {
 			player?.play()
-		} else if !autoPlay {
-			DispatchQueue.main.async {
+		}
+
+		// La durée exige le manifeste : la lire ici en synchrone retenait la file du
+		// module tout le temps du réseau. Elle arrive en tâche de fond ; le PAUSED
+		// d'un chargement sans lecture l'attend, comme avant.
+		Task { @MainActor [weak self, weak item] in
+			let duration = try? await item?.asset.load(.duration)
+			guard let self = self, let item = item, item === self.player?.currentItem else { return }
+			if let seconds = duration?.seconds, seconds.isFinite {
+				var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+				info[MPMediaItemPropertyPlaybackDuration] = seconds
+				MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+			}
+			if !self.shouldBePlaying && self.lastEmittedState == self.STATE_LOADING {
 				self.sendStateEvent(state: self.STATE_PAUSED, position: 0, duration: 0, track: self.currentTrack)
 			}
 		}
