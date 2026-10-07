@@ -572,10 +572,9 @@ class AudioPro: RCTEventEmitter {
 					}
 				}
 			} catch {
-				DispatchQueue.main.async {
-					self.onError(error.localizedDescription)
-					self.cleanup()
-				}
+				// Une pochette qui ne se charge pas laisse l'écran verrouillé sans image ;
+				// elle ne doit pas démonter la lecture.
+				self.log("Artwork fetch failed:", error.localizedDescription)
 			}
 		}
 	}
