@@ -192,7 +192,7 @@ class AudioPro: RCTEventEmitter {
 					sendPlayingStateEvent()
 
 					// Update now playing info
-					updateNowPlayingInfo(time: player?.currentTime().seconds ?? 0, rate: 1.0)
+					updateNowPlayingInfo(time: player?.currentTime().seconds ?? 0, rate: currentPlaybackSpeed)
 				} catch {
 					log("Failed to reactivate audio session: \(error.localizedDescription)")
 					emitPlaybackError("Failed to resume after interruption: \(error.localizedDescription)")
@@ -457,9 +457,14 @@ class AudioPro: RCTEventEmitter {
 		// Set up volume to ensure it's applied before playback starts
 		player?.volume = activeVolume
 
+		// play() starts at defaultRate (1.0 unless set), so the speed lives there
+		// and holds across every pause and resume. Unlike rate, setting it does
+		// not start playback.
+		player?.defaultRate = currentPlaybackSpeed
+
 		nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
 		nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
-		nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+		nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = autoPlay && pendingStartTimeMs == nil ? currentPlaybackSpeed : 0
 		MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
 
 		// Add notification observer for track completion to the new item
@@ -469,15 +474,6 @@ class AudioPro: RCTEventEmitter {
 			name: .AVPlayerItemDidPlayToEndTime,
 			object: item
 		)
-
-		// Set up playback speed
-		if currentPlaybackSpeed != 1.0 && pendingStartTimeMs == nil {
-			player?.rate = currentPlaybackSpeed
-
-			var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-			currentInfo[MPNowPlayingInfoPropertyPlaybackRate] = Double(currentPlaybackSpeed)
-			MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo
-		}
 
 		if autoPlay && pendingStartTimeMs == nil {
 			player?.play()
@@ -606,7 +602,7 @@ class AudioPro: RCTEventEmitter {
 		player?.play()
 
 		// Ensure lock screen controls are properly updated
-		updateNowPlayingInfo(time: player?.currentTime().seconds ?? 0, rate: 1.0)
+		updateNowPlayingInfo(time: player?.currentTime().seconds ?? 0, rate: currentPlaybackSpeed)
 
 		// Note: We don't need to call sendPlayingStateEvent() here because
 		// the rate change will trigger observeValue which now calls sendPlayingStateEvent()
@@ -880,16 +876,20 @@ class AudioPro: RCTEventEmitter {
 		currentPlaybackSpeed = Float(speed)
 
 		guard let player = player else {
-			onError("Cannot set playback speed: no track is playing")
+			// Not an error: the next play() carries the speed in its options.
+			log("Cannot set playback speed: no track is playing")
 			return
 		}
 
 		log("Setting playback speed to ", speed)
-		if pendingStartTimeMs == nil && !isSeekingInitialPosition {
-			player.rate = Float(speed)
+		// rate is only written while playing: on a paused or stopped player it
+		// would start playback. The next play() takes the speed from defaultRate.
+		player.defaultRate = currentPlaybackSpeed
+		if player.rate != 0 {
+			player.rate = currentPlaybackSpeed
+			// The lock screen extrapolates from the last elapsed time it was given.
+			updateNowPlayingInfo(time: player.currentTime().seconds, rate: currentPlaybackSpeed)
 		}
-
-		updateNowPlayingInfo(rate: Float(speed))
 
 		if hasListeners {
 			let playbackInfo = getPlaybackInfo()
@@ -985,6 +985,8 @@ class AudioPro: RCTEventEmitter {
 							guard completed else { return }
 							self.completeSeekingAndSendSeekCompleteNoticeEvent(newPosition: position)
 							if resumesInitialPlayback && self.shouldBePlaying { self.player?.rate = self.currentPlaybackSpeed }
+							// The lock screen was left at 0 s and rate 0 while loading.
+							self.updateNowPlayingInfo(time: position / 1000)
 						}
 					}
 				case .failed:
